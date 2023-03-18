@@ -1,0 +1,154 @@
+"""Training procedure for NICE.
+"""
+
+import argparse
+import torch, torchvision
+from torchvision import transforms
+import numpy as np
+from models.VAE import VAE
+from models.vanilla_vae import VanillaVAE
+from models.vq_vae import VQVAE
+import matplotlib.pyplot as plt
+import os
+from util import utils
+from datasets.CameraPoseDataset import CameraPoseDataset
+from datasets.RelPoseDataset import RelPoseDataset
+from datasets.KNNCameraPoseDataset import KNNCameraPoseDataset
+from torch.nn.functional import normalize
+from PIL import Image
+
+def train(vae, trainloader, optimizer, ep, device, backbone, reduction):
+    vae.train()  # set to training mode
+    #TODO
+    cnt = 0
+    running_loss = 0
+    for batch_idx, minibatch in enumerate(trainloader):
+        for k, v in minibatch.items():
+            minibatch[k] = v.to(device)
+        inputs = minibatch['query']
+        assert(inputs.any()>=0 and inputs.any()<=1)
+        bs = inputs.shape[0]
+        optimizer.zero_grad()
+        recon, mu, logvar = vae(inputs)
+        loss, recon_loss, kd_loss = vae.loss(inputs, recon, mu, logvar)
+        running_loss += loss.item() / bs
+        if batch_idx % 10 == 0:
+            print(f"Epoch {ep}: batch_idx {batch_idx}, recon_loss: {recon_loss.item()}, kd_loss: {kd_loss.item()}, loss: {loss.item()}")
+        loss.backward()
+        optimizer.step()
+        cnt += 1
+    return running_loss / cnt
+
+def inverse_normalize(tensor):
+    #mean=[0.485, 0.456, 0.406]
+    #std=[0.229, 0.224, 0.225]
+    mean = [-0.485 * 0.229, -0.456 * 0.224, -0.406 * 0.255]
+    std = [1 / 0.229, 1 / 0.224, 1 / 0.255]
+    tensor1 = tensor.detach().clone()
+    for i in range(len(tensor1)):
+        for t, m, s in zip(tensor1[i], mean, std):
+            t.mul_(s).add_(m)
+    return tensor1
+
+def tmp_func(x):
+    return x + torch.zeros_like(x).uniform_(0., 1./256.) #dequantization
+
+def main(args):
+    if not os.path.exists(args.out_path):
+        os.mkdir(args.out_path)
+    torch_seed = 0
+    numpy_seed = 2
+    torch.manual_seed(torch_seed)
+    np.random.seed(numpy_seed)
+    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
+
+    # vae = VAE(latent_dim=args.latent_dim, device=device).to(device)
+    # vae = VanillaVAE(in_out_channels=3, latent_dim=args.latent_dim).to(device)
+    vae = VQVAE(3, 64, 512).to(device)
+
+    if args.checkpoint_path:
+        vae.load_state_dict(torch.load(args.checkpoint_path, map_location=device), strict=False)
+
+    if args.mode == 'train':
+
+        # transform = transforms.Compose([
+        #     transforms.ToPILImage(),
+        #     transforms.Resize(256),
+        #     transforms.RandomCrop(224),
+        #     transforms.ToTensor(),
+        #     transforms.Lambda(tmp_func),  # dequantization
+        #     transforms.Normalize((0.,), (257. / 256.,)),  # rescales to [0,1]
+        # ])
+
+        transform = utils.train_transforms_vae.get('baseline')
+        # train_dataset = CameraPoseDataset(args.dataset_path, args.labels_file, transform)
+        # train_dataset = RelPoseDataset(args.dataset_path, args.labels_file, transform)
+        train_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, 1)
+
+        loader_params = {'batch_size': args.batch_size, 'shuffle': True,
+                         'num_workers': args.num_workers}
+        trainloader = torch.utils.data.DataLoader(train_dataset, **loader_params)
+
+        optimizer = torch.optim.Adam(vae.parameters(), lr=args.lr)
+        backbone = None
+
+        train_loss = []
+        for ep in range(args.epochs):
+            train_loss.append(train(vae, trainloader, optimizer, ep, device, backbone, args.reduction))
+            #if ep % 1 == 0:
+                #samples = vae.sample(args.sample_size, device)
+                #samples = inverse_normalize(samples)
+                #samples_grid = torchvision.utils.make_grid(samples)
+                #torchvision.utils.save_image(samples_grid, './samples/sample' + '_epoch_%d.png' % ep)
+            #print(f"Epoch {ep}:  train loss: {train_loss[-1}")
+
+        torch.save(vae.state_dict(), os.path.join(args.out_path, 'vae_model.pth'))
+        fig, ax = plt.subplots()
+        ax.plot(train_loss)
+        ax.set_title("Train Loss")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        plt.savefig(os.path.join(os.getcwd(), ".", f"vae_loss.png"))
+    else: #test
+        # Set to eval mode
+        vae.eval()
+        # Set the dataset and data loader
+        transform = utils.test_transforms.get('baseline')
+        test_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, 1)
+        loader_params = {'batch_size': 1,
+                         'shuffle': False,
+                         'num_workers': args.num_workers}
+        dataloader = torch.utils.data.DataLoader(test_dataset, **loader_params)
+        with torch.no_grad():
+            for i, minibatch in enumerate(dataloader, 0):
+                for k, v in minibatch.items():
+                    minibatch[k] = v.to(device)
+                inputs = minibatch['query']
+                recon, _, _ = vae(inputs)
+                if i==0:
+                    #recon = inverse_normalize(recon)
+                    samples_grid = torchvision.utils.make_grid(recon)
+                    torchvision.utils.save_image(samples_grid, './samples/samples.png')
+                    break
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser('')
+    parser.add_argument("--dataset_path", help="path to the physical location of the dataset", default="/nfstemp/Datasets/CAMBRIDGE_dataset/")
+    #parser.add_argument("--labels_file", help="pairs file", default="datasets/7Scenes/7scenes_training_pairs.csv")
+    parser.add_argument("--labels_file", help="pairs file", default="datasets/CambridgeLandmarks/cambridge_four_scenes.csv")
+    parser.add_argument("--refs_file", help="path to a file mapping reference images to their poses", default="datasets/CambridgeLandmarks/cambridge_four_scenes.csv")
+    parser.add_argument("--knn_file", help="path to a file mapping query images to their knns", default="datasets/CambridgeLandmarks/cambridge_StMarysChurch.csv_with_netvlads.csv")
+    parser.add_argument('--batch_size', help='number of images in a mini-batch.', type=int, default=64)
+    parser.add_argument('--sample_size', help='number of images to sample.', type=int, default=64)
+    parser.add_argument('--epochs', help='maximum number of iterations.', type=int, default=50)
+    parser.add_argument('--latent_dim', help='.', type=int, default=128)
+    parser.add_argument('--num_workers', help='.', type=int, default=4)
+    parser.add_argument('--lr', help='initial learning rate.', type=float, default=0.001)
+    parser.add_argument('--reduction', help='reduction', default='reduction_3')
+    parser.add_argument('--out_path', help='out_path', default='out_vae')
+    parser.add_argument('--checkpoint_path', help='checkpoint_path')
+    parser.add_argument('--mode', help='train/test', default='train')
+
+    args = parser.parse_args()
+    main(args)
