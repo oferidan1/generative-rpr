@@ -50,9 +50,6 @@ def inverse_normalize(tensor):
             t.mul_(s).add_(m)
     return tensor1
 
-def tmp_func(x):
-    return x + torch.zeros_like(x).uniform_(0., 1./256.) #dequantization
-
 def main(args):
     if not os.path.exists(args.out_path):
         os.mkdir(args.out_path)
@@ -64,23 +61,14 @@ def main(args):
 
     # vae = VAE(latent_dim=args.latent_dim, device=device).to(device)
     # vae = VanillaVAE(in_out_channels=3, latent_dim=args.latent_dim).to(device)
-    vae = VQVAE(3, 64, 512).to(device)
+    vae = VQVAE(1, 64, 512, beta=args.vq_beta).to(device)
 
     if args.checkpoint_path:
         vae.load_state_dict(torch.load(args.checkpoint_path, map_location=device), strict=False)
 
     if args.mode == 'train':
 
-        # transform = transforms.Compose([
-        #     transforms.ToPILImage(),
-        #     transforms.Resize(256),
-        #     transforms.RandomCrop(224),
-        #     transforms.ToTensor(),
-        #     transforms.Lambda(tmp_func),  # dequantization
-        #     transforms.Normalize((0.,), (257. / 256.,)),  # rescales to [0,1]
-        # ])
-
-        transform = utils.train_transforms_vae.get('baseline')
+        transform = utils.train_transforms_vae2.get('baseline')
         # train_dataset = CameraPoseDataset(args.dataset_path, args.labels_file, transform)
         # train_dataset = RelPoseDataset(args.dataset_path, args.labels_file, transform)
         train_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, 1)
@@ -113,7 +101,8 @@ def main(args):
         # Set to eval mode
         vae.eval()
         # Set the dataset and data loader
-        transform = utils.test_transforms.get('baseline')
+        #transform = utils.test_transforms.get('baseline')
+        transform = utils.train_transforms_vae2.get('baseline')
         test_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, 1)
         loader_params = {'batch_size': 1,
                          'shuffle': False,
@@ -127,11 +116,11 @@ def main(args):
                 recon, _, _ = vae(inputs)
                 if i==0:
                     #recon = inverse_normalize(recon)
-                    samples_grid = torchvision.utils.make_grid(recon)
-                    torchvision.utils.save_image(samples_grid, './samples/samples.png')
+                    #recon = (recon+1)/2
+                    torchvision.utils.save_image(recon[0], './samples/samples.png')
                     break
 
-
+#--mode=test --checkpoint_path=out_vae/vae_model.pth
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('')
     parser.add_argument("--dataset_path", help="path to the physical location of the dataset", default="/nfstemp/Datasets/CAMBRIDGE_dataset/")
@@ -141,9 +130,10 @@ if __name__ == '__main__':
     parser.add_argument("--knn_file", help="path to a file mapping query images to their knns", default="datasets/CambridgeLandmarks/cambridge_StMarysChurch.csv_with_netvlads.csv")
     parser.add_argument('--batch_size', help='number of images in a mini-batch.', type=int, default=64)
     parser.add_argument('--sample_size', help='number of images to sample.', type=int, default=64)
-    parser.add_argument('--epochs', help='maximum number of iterations.', type=int, default=50)
+    parser.add_argument('--epochs', help='maximum number of iterations.', type=int, default=20)
     parser.add_argument('--latent_dim', help='.', type=int, default=128)
     parser.add_argument('--num_workers', help='.', type=int, default=4)
+    parser.add_argument('--vq_beta', help='.', type=float, default=0.25)
     parser.add_argument('--lr', help='initial learning rate.', type=float, default=0.001)
     parser.add_argument('--reduction', help='reduction', default='reduction_3')
     parser.add_argument('--out_path', help='out_path', default='out_vae')

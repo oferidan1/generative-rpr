@@ -5,6 +5,7 @@ import numpy as np
 from skimage.io import imread
 import torch
 import transforms3d as t3d
+from PIL import Image
 
 class KNNCameraPoseDataset(Dataset):
     """
@@ -64,7 +65,8 @@ class KNNCameraPoseDataset(Dataset):
         return len(self.knn_queries)
 
     def load_img(self, img_path):
-        img = imread(img_path)
+        #img = imread(img_path)
+        img = Image.open(img_path).convert("L")
         if self.transform:
             img = self.transform(img)
         return img

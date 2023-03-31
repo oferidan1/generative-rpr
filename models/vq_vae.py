@@ -86,9 +86,12 @@ class VQVAE(nn.Module):
         self.img_size = img_size
         self.beta = beta
 
+        in_out_channels = in_channels
+
         modules = []
         if hidden_dims is None:
             hidden_dims = [128, 256]
+            #hidden_dims = [192, 384]
 
         # Build Encoder
         for h_dim in hidden_dims:
@@ -157,10 +160,11 @@ class VQVAE(nn.Module):
         modules.append(
             nn.Sequential(
                 nn.ConvTranspose2d(hidden_dims[-1],
-                                   out_channels=3,
+                                   out_channels=in_out_channels,
                                    kernel_size=4,
                                    stride=2, padding=1),
-                nn.Tanh()))
+                #nn.Tanh()))
+                nn.Sigmoid()))
 
         self.decoder = nn.Sequential(*modules)
 
@@ -188,7 +192,9 @@ class VQVAE(nn.Module):
     def forward(self, input):
         encoding = self.encode(input)[0]
         quantized_inputs, vq_loss = self.vq_layer(encoding)
-        return [self.decode(quantized_inputs), vq_loss, input]
+        recon = self.decode(quantized_inputs)
+        #recon = recon/2+1
+        return [recon, vq_loss, input]
 
     def loss(self, input, recons, vq_loss, log_var=0):
         """
