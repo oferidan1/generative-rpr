@@ -115,7 +115,7 @@ class VanillaVAE(nn.Module):
         eps = torch.randn_like(std)
         return eps * std + mu
 
-    def forward(self, input):
+    def forward(self, input, rel_pose):
         mu, log_var = self.encode(input)
         z = self.reparameterize(mu, log_var)
         recon = self.decode(z)
@@ -130,12 +130,12 @@ class VanillaVAE(nn.Module):
         :return:       """
 
 
-        kld_weight = 300#0.00025 # Account for the minibatch samples from the dataset
-        #recons_loss = F.mse_loss(recons, input)
-        recons_loss = F.binary_cross_entropy(recons, input, reduction='sum')
+        kld_weight = 0.00025 # Account for the minibatch samples from the dataset
+        recons_loss = F.mse_loss(recons, input)
+        #recons_loss = F.binary_cross_entropy(recons, input, reduction='sum')
 
-        #kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
-        kld_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+        #kld_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
 
         loss = recons_loss + kld_weight * kld_loss
         return loss, recons_loss.detach(), kld_loss.detach()

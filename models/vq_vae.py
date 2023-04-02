@@ -75,9 +75,10 @@ class VQVAE(nn.Module):
                  in_channels: int,
                  embedding_dim: int,
                  num_embeddings: int,
+                 bCondition = False,
                  hidden_dims = None,
                  beta: float = 0.25,
-                 img_size: int = 64,
+                 img_size: int = 224,
                  **kwargs) -> None:
         super(VQVAE, self).__init__()
 
@@ -85,8 +86,11 @@ class VQVAE(nn.Module):
         self.num_embeddings = num_embeddings
         self.img_size = img_size
         self.beta = beta
+        self.bCondition = bCondition
 
         in_out_channels = in_channels
+        if bCondition:
+            in_channels += 1 #condition
 
         modules = []
         if hidden_dims is None:
@@ -127,8 +131,13 @@ class VQVAE(nn.Module):
                                         embedding_dim,
                                         self.beta)
 
+        self.rel_pose_embedding1 = nn.Linear(7, img_size*img_size)
+        self.rel_pose_embedding2 = nn.Linear(7, img_size//4*img_size//4)
+
         # Build Decoder
         modules = []
+        if bCondition:
+            embedding_dim += 1
         modules.append(
             nn.Sequential(
                 nn.Conv2d(embedding_dim,
@@ -189,9 +198,15 @@ class VQVAE(nn.Module):
         result = self.decoder(z)
         return result
 
-    def forward(self, input):
+    def forward(self, input, rel_pose):
+        if self.bCondition:
+            rel_pose_emb1 = self.rel_pose_embedding1(rel_pose.float()).view(-1, 1, self.img_size, self.img_size)
+            input = torch.cat((input, rel_pose_emb1), dim=1)
         encoding = self.encode(input)[0]
         quantized_inputs, vq_loss = self.vq_layer(encoding)
+        if self.bCondition:
+            rel_pose_emb2 = self.rel_pose_embedding2(rel_pose.float()).view(-1, 1, self.img_size//4, self.img_size//4)
+            quantized_inputs = torch.cat((quantized_inputs, rel_pose_emb2), dim=1)
         recon = self.decode(quantized_inputs)
         #recon = recon/2+1
         return [recon, vq_loss, input]

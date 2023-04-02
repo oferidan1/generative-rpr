@@ -17,23 +17,23 @@ class VAE(nn.Module):
         self.device = device
         self.latent_dim = latent_dim
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 32, 4, 1, 2),  # B,  32, 28, 28
+            nn.Conv2d(1, 32, 4, 1, 2),  # B,  32, 28, 28
             nn.ReLU(True),
             nn.Conv2d(32, 32, 4, 2, 1),  # B,  32, 14, 14
             nn.ReLU(True),
             nn.Conv2d(32, 64, 4, 2, 1),  # B,  64,  7, 7
         )
 
-        self.mu = nn.Linear(64 * 7 * 7, latent_dim)
-        self.logvar = nn.Linear(64 * 7 * 7, latent_dim)
+        self.mu = nn.Linear(64 * 56 * 56, latent_dim)
+        self.logvar = nn.Linear(64 * 56 * 56, latent_dim)
 
-        self.upsample = nn.Linear(latent_dim, 64 * 7 * 7)
+        self.upsample = nn.Linear(latent_dim, 64 * 56 * 56)
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(64, 32, 4, 2, 1),  # B,  64,  14,  14
             nn.ReLU(True),
             nn.ConvTranspose2d(32, 32, 4, 2, 1, 1),  # B,  32, 28, 28
             nn.ReLU(True),
-            nn.ConvTranspose2d(32, 3, 4, 1, 2),  # B, 1, 28, 28
+            nn.ConvTranspose2d(32, 1, 4, 1, 2),  # B, 1, 28, 28
             nn.Sigmoid()
         )
 
@@ -52,7 +52,7 @@ class VAE(nn.Module):
         #TODO
         with torch.no_grad():
         	z = torch.randn((sample_size, self.latent_dim)).to(self.device)
-	        recon = self.decoder(self.upsample(z).view(-1, 64, 7, 7))
+	        recon = self.decoder(self.upsample(z).view(-1, 64, 56, 56))
         return recon
 
     def z_sample(self, mu, logvar):
@@ -64,7 +64,7 @@ class VAE(nn.Module):
         # now the reparam trick:
         return mu + epsilon * sigma
 
-    def loss1(self,x,recon, mu,logvar):
+    def loss(self,x,recon, mu,logvar):
         #TODO
         # our loss criteria is
         # loss(theta, phi) = -E_q_phi[log(p_theta(xi|z)] + KL(q_phi(z|xi)||p(z))
@@ -75,7 +75,7 @@ class VAE(nn.Module):
         loss = BCE_loss + 3 * KL_div_loss
         return loss, BCE_loss, KL_div_loss
 
-    def loss(self, input, recons, mu, log_var):
+    def loss2(self, input, recons, mu, log_var):
         """
         Computes the VAE loss function.
         KL(N(\mu, \sigma), N(0, 1)) = \log \frac{1}{\sigma} + \frac{\sigma^2 + \mu^2}{2} - \frac{1}{2}
@@ -92,15 +92,17 @@ class VAE(nn.Module):
         loss = recons_loss + kld_weight * kld_loss
         return loss, recons_loss, kld_loss
 
-    def forward(self, x):
+    def forward(self, x, rel_pose):
         #TODO
         # encode image x to latent z
-        z = self.encoder(x).view(-1, 64*7*7)
+        x_shape = x.shape
+        z = self.encoder(x).view(-1, 64*56*56)
         # get mu and std of z
         mu = self.mu(z)
         logvar = self.logvar(z)
         # sample using the reparm trick
         z_s = self.z_sample(mu, logvar)
         # reconstruct the image using the sampled z
-        recon = self.decoder(self.upsample(z_s).view(-1, 64, 7, 7))
+        recon = self.decoder(self.upsample(z_s).view(-1, 64, 56, 56))
+        #recon = recon.view(x_shape)
         return recon, mu, logvar

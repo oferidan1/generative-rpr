@@ -26,11 +26,14 @@ def train(vae, trainloader, optimizer, ep, device, backbone, reduction):
         for k, v in minibatch.items():
             minibatch[k] = v.to(device)
         inputs = minibatch['query']
-        assert(inputs.any()>=0 and inputs.any()<=1)
+        refs = minibatch['ref']
+        rel_pose = minibatch['rel_pose']
+        #assert(inputs.any()>=0 and inputs.any()<=1)
         bs = inputs.shape[0]
         optimizer.zero_grad()
-        recon, mu, logvar = vae(inputs)
-        loss, recon_loss, kd_loss = vae.loss(inputs, recon, mu, logvar)
+        recon, mu, logvar = vae(inputs, rel_pose)
+        #loss, recon_loss, kd_loss = vae.loss(inputs, recon, mu, logvar)
+        loss, recon_loss, kd_loss = vae.loss(refs, recon, mu, logvar)
         running_loss += loss.item() / bs
         if batch_idx % 10 == 0:
             print(f"Epoch {ep}: batch_idx {batch_idx}, recon_loss: {recon_loss.item()}, kd_loss: {kd_loss.item()}, loss: {loss.item()}")
@@ -59,9 +62,9 @@ def main(args):
     np.random.seed(numpy_seed)
     device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
 
-    # vae = VAE(latent_dim=args.latent_dim, device=device).to(device)
-    # vae = VanillaVAE(in_out_channels=3, latent_dim=args.latent_dim).to(device)
-    vae = VQVAE(1, 64, 512, beta=args.vq_beta).to(device)
+    #vae = VAE(latent_dim=args.latent_dim, device=device).to(device)
+    #vae = VanillaVAE(in_out_channels=1, latent_dim=args.latent_dim).to(device)
+    vae = VQVAE(1, 64, 512, bCondition=args.bCondition, beta=args.vq_beta).to(device)
 
     if args.checkpoint_path:
         vae.load_state_dict(torch.load(args.checkpoint_path, map_location=device), strict=False)
@@ -83,12 +86,10 @@ def main(args):
         train_loss = []
         for ep in range(args.epochs):
             train_loss.append(train(vae, trainloader, optimizer, ep, device, backbone, args.reduction))
-            #if ep % 1 == 0:
-                #samples = vae.sample(args.sample_size, device)
-                #samples = inverse_normalize(samples)
-                #samples_grid = torchvision.utils.make_grid(samples)
-                #torchvision.utils.save_image(samples_grid, './samples/sample' + '_epoch_%d.png' % ep)
-            #print(f"Epoch {ep}:  train loss: {train_loss[-1}")
+            # if ep % 1 == 0:
+            #     samples = vae.sample(args.sample_size, device)
+            #     samples_grid = torchvision.utils.make_grid(samples)
+            #     torchvision.utils.save_image(samples_grid, './samples/sample' + '_epoch_%d.png' % ep)
 
         torch.save(vae.state_dict(), os.path.join(args.out_path, 'vae_model.pth'))
         fig, ax = plt.subplots()
@@ -103,7 +104,7 @@ def main(args):
         # Set the dataset and data loader
         #transform = utils.test_transforms.get('baseline')
         transform = utils.train_transforms_vae2.get('baseline')
-        test_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, 1)
+        test_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, args.knn_len)
         loader_params = {'batch_size': 1,
                          'shuffle': False,
                          'num_workers': args.num_workers}
@@ -113,11 +114,13 @@ def main(args):
                 for k, v in minibatch.items():
                     minibatch[k] = v.to(device)
                 inputs = minibatch['query']
-                recon, _, _ = vae(inputs)
+                refs = minibatch['ref']
+                rel_pose = minibatch['rel_pose']
+                recon, _, _ = vae(inputs, rel_pose)
                 if i==0:
                     #recon = inverse_normalize(recon)
                     #recon = (recon+1)/2
-                    torchvision.utils.save_image(recon[0], './samples/samples.png')
+                    torchvision.utils.save_image(recon[0], './samples/output.png')
                     break
 
 #--mode=test --checkpoint_path=out_vae/vae_model.pth
@@ -133,6 +136,8 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', help='maximum number of iterations.', type=int, default=20)
     parser.add_argument('--latent_dim', help='.', type=int, default=128)
     parser.add_argument('--num_workers', help='.', type=int, default=4)
+    parser.add_argument('--knn_len', help='.', type=int, default=1)
+    parser.add_argument('--bCondition', help='.', type=int, default=0)
     parser.add_argument('--vq_beta', help='.', type=float, default=0.25)
     parser.add_argument('--lr', help='initial learning rate.', type=float, default=0.001)
     parser.add_argument('--reduction', help='reduction', default='reduction_3')
