@@ -104,13 +104,27 @@ test_transforms = {
 }
 
 train_transforms_vae = {
-    'baseline': transforms.Compose([transforms.ToPILImage(),
+    'baseline': transforms.Compose([#transforms.ToPILImage(),
                                     transforms.Resize(256),
                                     transforms.RandomCrop(224),
                                     transforms.ToTensor(),
                                     transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
 
+}
+
+def tmp_func(x):
+    return x + torch.zeros_like(x).uniform_(0., 1./256.) #dequantization
+
+train_transforms_vae2 = {
+    'baseline':  transforms.Compose([
+        #    transforms.ToPILImage(),
+            transforms.Resize(256),
+            transforms.RandomCrop(224),
+            transforms.ToTensor(),
+            transforms.Lambda(tmp_func),  # dequantization
+            transforms.Normalize((0.,), (257. / 256.,)),  # rescales to [0,1]
+        ])
 }
 
 # Code from: https://github.com/JYChen18/RPMG/
