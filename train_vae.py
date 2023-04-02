@@ -17,7 +17,7 @@ from datasets.KNNCameraPoseDataset import KNNCameraPoseDataset
 from torch.nn.functional import normalize
 from PIL import Image
 
-def train(vae, trainloader, optimizer, ep, device, backbone, reduction):
+def train(vae, trainloader, optimizer, ep, device, bCondition):
     vae.train()  # set to training mode
     #TODO
     cnt = 0
@@ -32,8 +32,10 @@ def train(vae, trainloader, optimizer, ep, device, backbone, reduction):
         bs = inputs.shape[0]
         optimizer.zero_grad()
         recon, mu, logvar = vae(inputs, rel_pose)
-        #loss, recon_loss, kd_loss = vae.loss(inputs, recon, mu, logvar)
-        loss, recon_loss, kd_loss = vae.loss(refs, recon, mu, logvar)
+        if bCondition:
+            loss, recon_loss, kd_loss = vae.loss(refs, recon, mu, logvar)
+        else:
+            loss, recon_loss, kd_loss = vae.loss(inputs, recon, mu, logvar)
         running_loss += loss.item() / bs
         if batch_idx % 10 == 0:
             print(f"Epoch {ep}: batch_idx {batch_idx}, recon_loss: {recon_loss.item()}, kd_loss: {kd_loss.item()}, loss: {loss.item()}")
@@ -73,8 +75,10 @@ def main(args):
 
         transform = utils.train_transforms_vae2.get('baseline')
         # train_dataset = CameraPoseDataset(args.dataset_path, args.labels_file, transform)
-        # train_dataset = RelPoseDataset(args.dataset_path, args.labels_file, transform)
-        train_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, 1)
+        if '7scenes' in args.labels_file:
+            train_dataset = RelPoseDataset(args.dataset_path, args.labels_file, transform)
+        else:
+            train_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, 1)
 
         loader_params = {'batch_size': args.batch_size, 'shuffle': True,
                          'num_workers': args.num_workers}
@@ -85,7 +89,7 @@ def main(args):
 
         train_loss = []
         for ep in range(args.epochs):
-            train_loss.append(train(vae, trainloader, optimizer, ep, device, backbone, args.reduction))
+            train_loss.append(train(vae, trainloader, optimizer, ep, device, args.bCondition))
             # if ep % 1 == 0:
             #     samples = vae.sample(args.sample_size, device)
             #     samples_grid = torchvision.utils.make_grid(samples)
@@ -104,7 +108,11 @@ def main(args):
         # Set the dataset and data loader
         #transform = utils.test_transforms.get('baseline')
         transform = utils.train_transforms_vae2.get('baseline')
-        test_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, args.knn_len)
+        if '7scenes' in args.labels_file:
+            test_dataset = RelPoseDataset(args.dataset_path, args.labels_file, transform)
+        else:
+            test_dataset = KNNCameraPoseDataset(args.dataset_path, args.labels_file, args.refs_file, args.knn_file, transform, args.knn_len)
+
         loader_params = {'batch_size': 1,
                          'shuffle': False,
                          'num_workers': args.num_workers}
@@ -126,9 +134,10 @@ def main(args):
 #--mode=test --checkpoint_path=out_vae/vae_model.pth
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('')
-    parser.add_argument("--dataset_path", help="path to the physical location of the dataset", default="/nfstemp/Datasets/CAMBRIDGE_dataset/")
-    #parser.add_argument("--labels_file", help="pairs file", default="datasets/7Scenes/7scenes_training_pairs.csv")
-    parser.add_argument("--labels_file", help="pairs file", default="datasets/CambridgeLandmarks/cambridge_four_scenes.csv")
+    #parser.add_argument("--dataset_path", help="path to the physical location of the dataset", default="/nfstemp/Datasets/CAMBRIDGE_dataset/")
+    parser.add_argument("--dataset_path", help="path to the physical location of the dataset", default="/nfstemp/Datasets/7Scenes/")
+    parser.add_argument("--labels_file", help="pairs file", default="datasets/7Scenes/7scenes_training_pairs_fire.csv")
+    #parser.add_argument("--labels_file", help="pairs file", default="datasets/CambridgeLandmarks/cambridge_four_scenes.csv")
     parser.add_argument("--refs_file", help="path to a file mapping reference images to their poses", default="datasets/CambridgeLandmarks/cambridge_four_scenes.csv")
     parser.add_argument("--knn_file", help="path to a file mapping query images to their knns", default="datasets/CambridgeLandmarks/cambridge_StMarysChurch.csv_with_netvlads.csv")
     parser.add_argument('--batch_size', help='number of images in a mini-batch.', type=int, default=64)
