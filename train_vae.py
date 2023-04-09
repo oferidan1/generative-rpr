@@ -8,6 +8,7 @@ import numpy as np
 from models.VAE import VAE
 from models.vanilla_vae import VanillaVAE
 from models.vq_vae import VQVAE
+from models.vq_vae2 import VQVAE2
 import matplotlib.pyplot as plt
 import os
 from util import utils
@@ -62,11 +63,13 @@ def main(args):
     numpy_seed = 2
     torch.manual_seed(torch_seed)
     np.random.seed(numpy_seed)
-    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:"+args.gpu if torch.cuda.is_available() else "cpu")
 
     #vae = VAE(latent_dim=args.latent_dim, device=device).to(device)
     #vae = VanillaVAE(in_out_channels=1, latent_dim=args.latent_dim).to(device)
-    vae = VQVAE(1, 64, 512, bCondition=args.bCondition, beta=args.vq_beta).to(device)
+    bSample = 0
+    #vae = VQVAE(1, 64, 512, bCondition=args.bCondition, beta=args.vq_beta).to(device)
+    vae = VQVAE2(in_channel=1, bCondition=args.bCondition, beta=args.vq_beta).to(device)
 
     if args.checkpoint_path:
         vae.load_state_dict(torch.load(args.checkpoint_path, map_location=device), strict=False)
@@ -90,10 +93,10 @@ def main(args):
         train_loss = []
         for ep in range(args.epochs):
             train_loss.append(train(vae, trainloader, optimizer, ep, device, args.bCondition))
-            # if ep % 1 == 0:
-            #     samples = vae.sample(args.sample_size, device)
-            #     samples_grid = torchvision.utils.make_grid(samples)
-            #     torchvision.utils.save_image(samples_grid, './samples/sample' + '_epoch_%d.png' % ep)
+            if bSample and (ep % 1 == 0):
+                 samples = vae.sample(args.sample_size, device)
+                 samples_grid = torchvision.utils.make_grid(samples)
+                 torchvision.utils.save_image(samples_grid, './samples/sample' + '_epoch_%d.png' % ep)
 
         torch.save(vae.state_dict(), os.path.join(args.out_path, 'vae_model.pth'))
         fig, ax = plt.subplots()
@@ -153,6 +156,7 @@ if __name__ == '__main__':
     parser.add_argument('--out_path', help='out_path', default='out_vae')
     parser.add_argument('--checkpoint_path', help='checkpoint_path')
     parser.add_argument('--mode', help='train/test', default='train')
+    parser.add_argument('--gpu', help='gpu index', default='7')
 
     args = parser.parse_args()
     main(args)
