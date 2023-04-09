@@ -234,3 +234,54 @@ def symmetric_orthogonalization(x):
   vt = torch.cat((vt[:, :2, :], vt[:, -1:, :] * det), 1)
   r = torch.matmul(u, vt)
   return r
+
+
+def positional_encoding(
+        tensor, num_encoding_functions=6, include_input=True, log_sampling=True
+) -> torch.Tensor:
+    r"""Apply positional encoding to the input.
+
+    Args:
+      tensor (torch.Tensor): Input tensor to be positionally encoded.
+      num_encoding_functions (optional, int): Number of encoding functions used to
+          compute a positional encoding (default: 6).
+      include_input (optional, bool): Whether or not to include the input in the
+          computed positional encoding (default: True).
+      log_sampling (optional, bool): Sample logarithmically in frequency space, as
+          opposed to linearly (default: True).
+
+    Returns:
+      (torch.Tensor): Positional encoding of the input tensor.
+    """
+    # TESTED
+    # Trivially, the input tensor is added to the positional encoding.
+    encoding = [tensor] if include_input else []
+    # Now, encode the input using a set of high-frequency functions and append the
+    # resulting values to the encoding.
+    frequency_bands = None
+    if log_sampling:
+        frequency_bands = 2.0 ** torch.linspace(
+            0.0,
+            num_encoding_functions - 1,
+            num_encoding_functions,
+            dtype=tensor.dtype,
+            device=tensor.device,
+        )
+    else:
+        frequency_bands = torch.linspace(
+            2.0 ** 0.0,
+            2.0 ** (num_encoding_functions - 1),
+            num_encoding_functions,
+            dtype=tensor.dtype,
+            device=tensor.device,
+        )
+
+    for freq in frequency_bands:
+        for func in [torch.sin, torch.cos]:
+            encoding.append(func(tensor * freq))
+
+    # Special case, for no positional encoding
+    if len(encoding) == 1:
+        return encoding[0]
+    else:
+        return torch.cat(encoding, dim=-1)
