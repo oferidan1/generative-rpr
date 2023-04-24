@@ -11,13 +11,7 @@ import torch.nn.functional as F
 from torchvision import transforms
 import ssl
 import os
-
-def set_proxy():
-    ssl._create_default_https_context = ssl._create_unverified_context
-    os.environ["http_proxy"] = "http://127.0.0.1:3128"
-    os.environ["https_proxy"] = "http://127.0.0.1:3128"
-    os.environ["ftp_proxy"] = "http://127.0.0.1:3128"
-    os.environ["socks_proxy"] = "http://127.0.0.1:3128"
+from math import log10, sqrt
 
 # Logging and output utils
 ##########################
@@ -285,3 +279,12 @@ def positional_encoding(
         return encoding[0]
     else:
         return torch.cat(encoding, dim=-1)
+
+def PSNR(original, compressed):
+    mse = torch.mean((original - compressed) ** 2)
+    if(mse == 0):  # MSE is zero means no noise is present in the signal .
+                  # Therefore PSNR have no importance.
+        return 100
+    max_pixel = 255.0
+    psnr = 20 * log10(max_pixel / sqrt(mse))
+    return psnr

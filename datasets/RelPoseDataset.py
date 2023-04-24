@@ -5,24 +5,32 @@ import pandas as pd
 from os.path import join
 import numpy as np
 import transforms3d as t3d
-
+from PIL import Image
 
 class RelPoseDataset(Dataset):
-    def __init__(self, data_path, pairs_file, transform=None):
+    def __init__(self, data_path, pairs_file, transform=None, bLuma=True):
         self.img_path1, self.scenes1, self.scene_ids1, self.poses1, \
         self.img_path2, self.scenes2, self.scene_ids2, self.poses2, self.rel_poses = \
             read_pairs_file(data_path, pairs_file)
         self.transform = transform
+        self.bLuma = bLuma
 
     def __len__(self):
         return len(self.img_path1)
 
     def __getitem__(self, idx):
-        img1 = imread(self.img_path1[idx])
-        img2 = imread(self.img_path2[idx])
+        #img1 = imread(self.img_path1[idx])
+        img1 = Image.open(self.img_path1[idx])
+        if self.bLuma:
+            img1 = img1.convert("L")
+        #img2 = imread(self.img_path2[idx])
+        img2 = Image.open(self.img_path2[idx])
+        if self.bLuma:
+            img2 = img2.convert("L")
         pose1 = self.poses1[idx]
         pose2 = self.poses2[idx]
         rel_pose = self.rel_poses[idx]
+        scene1 = self.scene_ids1[idx]
 
         if self.transform:
             img1 = self.transform(img1)
@@ -41,7 +49,8 @@ class RelPoseDataset(Dataset):
                 'ref': img2,
                 'query_pose': pose1,
                 'ref_pose': pose2,
-                'rel_pose':rel_pose}
+                'rel_pose':rel_pose,
+                'scene': scene1}
 
 def read_pairs_file(dataset_path, labels_file):
     df = pd.read_csv(labels_file)
@@ -54,8 +63,8 @@ def read_pairs_file(dataset_path, labels_file):
         img_paths.append([join(dataset_path, path) for path in df['img_path_{}'.format(suffix)].values])
         if "scene_{}".format(suffix) in df.keys():
             scenes.append(df['scene_{}'.format(suffix)].values)
-            #scene_ids.append( df['scene_id_{}'.format(suffix)].values)
-            scene_ids.append([])
+            scene_ids.append( df['scene_id_{}'.format(suffix)].values)
+            #scene_ids.append([])
         else:
             scenes.append([])
             scene_ids.append([])

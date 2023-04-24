@@ -1,4 +1,4 @@
-"""Training procedure for NICE.
+"""Training procedure for Generative-RPR.
 """
 
 import argparse
@@ -18,9 +18,8 @@ from datasets.KNNCameraPoseDataset import KNNCameraPoseDataset
 from torch.nn.functional import normalize
 from PIL import Image
 
-def train(vae, trainloader, optimizer, ep, device, bCondition):
+def train(vae, trainloader, optimizer, ep, device, bPoseCondition):
     vae.train()  # set to training mode
-    #TODO
     cnt = 0
     running_loss = 0
     for batch_idx, minibatch in enumerate(trainloader):
@@ -33,9 +32,11 @@ def train(vae, trainloader, optimizer, ep, device, bCondition):
         bs = inputs.shape[0]
         optimizer.zero_grad()
         recon, mu, logvar = vae(inputs, rel_pose)
-        if bCondition:
+        if bPoseCondition:
+            # incase of pose-condition, compare output to reference image
             loss, recon_loss, kd_loss = vae.loss(refs, recon, mu, logvar)
         else:
+            # incase of no pose condition, compare output to input image
             loss, recon_loss, kd_loss = vae.loss(inputs, recon, mu, logvar)
         running_loss += loss.item() / bs
         if batch_idx % 10 == 0:
@@ -44,17 +45,6 @@ def train(vae, trainloader, optimizer, ep, device, bCondition):
         optimizer.step()
         cnt += 1
     return running_loss / cnt
-
-def inverse_normalize(tensor):
-    #mean=[0.485, 0.456, 0.406]
-    #std=[0.229, 0.224, 0.225]
-    mean = [-0.485 * 0.229, -0.456 * 0.224, -0.406 * 0.255]
-    std = [1 / 0.229, 1 / 0.224, 1 / 0.255]
-    tensor1 = tensor.detach().clone()
-    for i in range(len(tensor1)):
-        for t, m, s in zip(tensor1[i], mean, std):
-            t.mul_(s).add_(m)
-    return tensor1
 
 def main(args):
     if not os.path.exists(args.out_path):
@@ -66,18 +56,18 @@ def main(args):
     device = torch.device("cuda:"+args.gpu if torch.cuda.is_available() else "cpu")
 
     #vae = VAE(latent_dim=args.latent_dim, device=device).to(device)
-    #vae = VanillaVAE(in_out_channels=1, latent_dim=args.latent_dim).to(device)
+    #vae = VanillaVAE(in_out_channels=1, latent_dim=args.latent_dim, bPoseCondition=args.bPoseCondition).to(device)
     bSample = 0
-    #vae = VQVAE(1, 64, 512, bCondition=args.bCondition, beta=args.vq_beta).to(device)
-    vae = VQVAE2(in_channel=1, bCondition=args.bCondition, beta=args.vq_beta).to(device)
+    vae = VQVAE(1, 64, 512, bPoseCondition=args.bPoseCondition, beta=args.vq_beta).to(device)
+    #vae = VQVAE2(in_channel=1, bPoseCondition=args.bPoseCondition, beta=args.vq_beta).to(device)
 
     if args.checkpoint_path:
         vae.load_state_dict(torch.load(args.checkpoint_path, map_location=device), strict=False)
 
+    #train mode for generative-RPR project
     if args.mode == 'train':
 
         transform = utils.train_transforms_vae2.get('baseline')
-        # train_dataset = CameraPoseDataset(args.dataset_path, args.labels_file, transform)
         if '7scenes' in args.labels_file:
             train_dataset = RelPoseDataset(args.dataset_path, args.labels_file, transform)
         else:
@@ -86,13 +76,11 @@ def main(args):
         loader_params = {'batch_size': args.batch_size, 'shuffle': True,
                          'num_workers': args.num_workers}
         trainloader = torch.utils.data.DataLoader(train_dataset, **loader_params)
-
         optimizer = torch.optim.Adam(vae.parameters(), lr=args.lr)
-        backbone = None
 
         train_loss = []
         for ep in range(args.epochs):
-            train_loss.append(train(vae, trainloader, optimizer, ep, device, args.bCondition))
+            train_loss.append(train(vae, trainloader, optimizer, ep, device, args.bPoseCondition))
             if bSample and (ep % 1 == 0):
                  samples = vae.sample(args.sample_size, device)
                  samples_grid = torchvision.utils.make_grid(samples)
@@ -105,11 +93,10 @@ def main(args):
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Loss")
         plt.savefig(os.path.join(os.getcwd(), ".", f"vae_loss.png"))
-    else: #test
+    else: #test mode
         # Set to eval mode
         vae.eval()
         # Set the dataset and data loader
-        #transform = utils.test_transforms.get('baseline')
         transform = utils.train_transforms_vae2.get('baseline')
         if '7scenes' in args.labels_file:
             test_dataset = RelPoseDataset(args.dataset_path, args.labels_file, transform)
@@ -120,6 +107,7 @@ def main(args):
                          'shuffle': False,
                          'num_workers': args.num_workers}
         dataloader = torch.utils.data.DataLoader(test_dataset, **loader_params)
+        sum = 0
         with torch.no_grad():
             for i, minibatch in enumerate(dataloader, 0):
                 for k, v in minibatch.items():
@@ -128,17 +116,25 @@ def main(args):
                 refs = minibatch['ref']
                 rel_pose = minibatch['rel_pose']
                 recon, _, _ = vae(inputs, rel_pose)
-                if i==0:
-                    #recon = inverse_normalize(recon)
-                    #recon = (recon+1)/2
-                    torchvision.utils.save_image(recon[0], './samples/output.png')
+
+                if i < 5:
+                    torchvision.utils.save_image(recon[0], './samples/output' + str(i) + '.jpg')
+                    torchvision.utils.save_image(inputs[0], './samples/input' + str(i) + '.jpg')
+                    torchvision.utils.save_image(refs[0], './samples/ref' + str(i) + '.jpg')
+                    psnr = utils.PSNR(inputs[0]*255, recon[0]*255)
+                    sum += psnr
+                else:
                     break
 
-#--mode=test --checkpoint_path=out_vae/vae_model.pth
+        avg_psnr = sum / i
+        print(avg_psnr)
+
+#example of test command:
+#python train_vae.py --mode=test --checkpoint_path=out_vae/vae_model.pth --bPoseCondition=0
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('')
     #parser.add_argument("--dataset_path", help="path to the physical location of the dataset", default="/nfstemp/Datasets/CAMBRIDGE_dataset/")
-    parser.add_argument("--dataset_path", help="path to the physical location of the dataset", default="/nfstemp/Datasets/7Scenes/")
+    parser.add_argument("--dataset_path", help="path to the physical location of the dataset", default="/data/datasets/7Scenes/")
     parser.add_argument("--labels_file", help="pairs file", default="datasets/7Scenes/7scenes_training_pairs_fire.csv")
     #parser.add_argument("--labels_file", help="pairs file", default="datasets/CambridgeLandmarks/cambridge_four_scenes.csv")
     parser.add_argument("--refs_file", help="path to a file mapping reference images to their poses", default="datasets/CambridgeLandmarks/cambridge_four_scenes.csv")
@@ -149,14 +145,14 @@ if __name__ == '__main__':
     parser.add_argument('--latent_dim', help='.', type=int, default=128)
     parser.add_argument('--num_workers', help='.', type=int, default=4)
     parser.add_argument('--knn_len', help='.', type=int, default=1)
-    parser.add_argument('--bCondition', help='.', type=int, default=0)
+    parser.add_argument('--bPoseCondition', help='.', type=int, default=0)
     parser.add_argument('--vq_beta', help='.', type=float, default=0.25)
     parser.add_argument('--lr', help='initial learning rate.', type=float, default=0.001)
     parser.add_argument('--reduction', help='reduction', default='reduction_3')
     parser.add_argument('--out_path', help='out_path', default='out_vae')
     parser.add_argument('--checkpoint_path', help='checkpoint_path')
     parser.add_argument('--mode', help='train/test', default='train')
-    parser.add_argument('--gpu', help='gpu index', default='7')
+    parser.add_argument('--gpu', help='gpu index', default='0')
 
     args = parser.parse_args()
     main(args)

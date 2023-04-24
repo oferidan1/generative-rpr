@@ -173,15 +173,15 @@ class VQVAE2(nn.Module):
         decay=0.99,
         beta=0.25,
         img_size=224,
-        bCondition=False,
+        bPoseCondition=False,
     ):
         super().__init__()
 
         self.beta = beta
         self.img_size=img_size
-        self.bCondition = bCondition
+        self.bPoseCondition = bPoseCondition
         in_out_channel = in_channel
-        if bCondition:
+        if bPoseCondition:
             in_channel += 1 #condition
         self.enc_b = Encoder(in_channel, channel, n_res_block, n_res_channel, stride=4)
         self.enc_t = Encoder(channel, channel, n_res_block, n_res_channel, stride=2)
@@ -196,7 +196,7 @@ class VQVAE2(nn.Module):
             embed_dim, embed_dim, 4, stride=2, padding=1
         )
         dec_in_channel = embed_dim + embed_dim
-        if bCondition:
+        if bPoseCondition:
             dec_in_channel += 1
         self.dec = Decoder(
             dec_in_channel,
@@ -208,13 +208,13 @@ class VQVAE2(nn.Module):
         )
 
     def forward(self, input, rel_pose):
-        if self.bCondition:
+        if self.bPoseCondition:
             rel_pose_emb1 = utils.positional_encoding(rel_pose.float(), num_encoding_functions=int(32), include_input=False, log_sampling=True)
             rel_pose_emb1 = rel_pose_emb1.repeat(1, 112)
             rel_pose_emb1 = rel_pose_emb1.view(-1, 1, self.img_size, self.img_size)
             input = torch.cat((input, rel_pose_emb1), dim=1)
         quant_t, quant_b, diff, _, _ = self.encode(input)
-        if self.bCondition:
+        if self.bPoseCondition:
             rel_pose_emb2 = utils.positional_encoding(rel_pose.float(), num_encoding_functions=int(32), include_input=False, log_sampling=True)
             rel_pose_emb2 = rel_pose_emb2.repeat(1, 7)
             rel_pose_emb2 = rel_pose_emb2.view(-1, 1, self.img_size//4, self.img_size//4)

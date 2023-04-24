@@ -1,23 +1,29 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-
+from util import utils
 
 class VanillaVAE(nn.Module):
 
 
     def __init__(self,
                  in_out_channels,
-                 latent_dim):
+                 latent_dim,
+                 bPoseCondition=False,
+                 img_size=224):
 
         super(VanillaVAE, self).__init__()
 
         self.latent_dim = latent_dim
+        self.bPoseCondition = bPoseCondition
+        self.img_size = img_size
 
         modules = []
         hidden_dims = [32, 64, 128, 256, 512]
 
         in_channels = in_out_channels
+        if bPoseCondition:
+            in_channels += 1  # condition
 
         # Build Encoder
         for h_dim in hidden_dims:
@@ -37,8 +43,11 @@ class VanillaVAE(nn.Module):
 
         # Build Decoder
         modules = []
+        dec_in_channel = latent_dim
+        if bPoseCondition:
+            dec_in_channel += latent_dim
 
-        self.decoder_input = nn.Linear(latent_dim, hidden_dims[-1] * 49)
+        self.decoder_input = nn.Linear(dec_in_channel, hidden_dims[-1] * 49)
 
         hidden_dims.reverse()
 
@@ -116,8 +125,21 @@ class VanillaVAE(nn.Module):
         return eps * std + mu
 
     def forward(self, input, rel_pose):
+        #encode the pose information and concat to input
+        if self.bPoseCondition:
+            rel_pose_emb1 = utils.positional_encoding(rel_pose.float(), num_encoding_functions=int(32), include_input=False, log_sampling=True)
+            rel_pose_emb1 = rel_pose_emb1.repeat(1, 112)
+            rel_pose_emb1 = rel_pose_emb1.view(-1, 1, self.img_size, self.img_size)
+            input = torch.cat((input, rel_pose_emb1), dim=1)
+        #encode the input
         mu, log_var = self.encode(input)
         z = self.reparameterize(mu, log_var)
+        # encode the pose information and concat to latent
+        if self.bPoseCondition:
+            rel_pose_emb2 = utils.positional_encoding(rel_pose.float(), num_encoding_functions=int(32),
+                                                      include_input=False, log_sampling=True)
+            z = torch.cat((z, rel_pose_emb2), dim=1)
+        #decode the image
         recon = self.decode(z)
         return recon, mu, log_var
 
@@ -155,7 +177,9 @@ class VanillaVAE(nn.Module):
                         self.latent_dim)
 
         z = z.to(current_device)
-
+        if self.bPoseCondition:
+            pose = torch.zeros_like(z)
+            z = torch.cat((z, pose), dim=1)
         samples = self.decode(z)
         return samples
 

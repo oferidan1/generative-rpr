@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-
+from util import utils
 
 class VectorQuantizer(nn.Module):
     """
@@ -75,7 +75,7 @@ class VQVAE(nn.Module):
                  in_channels: int,
                  embedding_dim: int,
                  num_embeddings: int,
-                 bCondition = False,
+                 bPoseCondition = False,
                  hidden_dims = None,
                  beta: float = 0.25,
                  img_size: int = 224,
@@ -86,10 +86,10 @@ class VQVAE(nn.Module):
         self.num_embeddings = num_embeddings
         self.img_size = img_size
         self.beta = beta
-        self.bCondition = bCondition
+        self.bPoseCondition = bPoseCondition
 
         in_out_channels = in_channels
-        if bCondition:
+        if bPoseCondition:
             in_channels += 1 #condition
 
         modules = []
@@ -136,7 +136,7 @@ class VQVAE(nn.Module):
 
         # Build Decoder
         modules = []
-        if bCondition:
+        if bPoseCondition:
             embedding_dim += 1
         modules.append(
             nn.Sequential(
@@ -199,14 +199,24 @@ class VQVAE(nn.Module):
         return result
 
     def forward(self, input, rel_pose):
-        if self.bCondition:
-            rel_pose_emb1 = self.rel_pose_embedding1(rel_pose.float()).view(-1, 1, self.img_size, self.img_size)
+        # encode the pose information and concat to input
+        if self.bPoseCondition:
+            #rel_pose_emb1 = self.rel_pose_embedding1(rel_pose.float()).view(-1, 1, self.img_size, self.img_size)
+            rel_pose_emb1 = utils.positional_encoding(rel_pose.float(), num_encoding_functions=int(32), include_input=False, log_sampling=True)
+            rel_pose_emb1 = rel_pose_emb1.repeat(1, 112)
+            rel_pose_emb1 = rel_pose_emb1.view(-1, 1, self.img_size, self.img_size)
             input = torch.cat((input, rel_pose_emb1), dim=1)
+        #encode the input
         encoding = self.encode(input)[0]
         quantized_inputs, vq_loss = self.vq_layer(encoding)
-        if self.bCondition:
-            rel_pose_emb2 = self.rel_pose_embedding2(rel_pose.float()).view(-1, 1, self.img_size//4, self.img_size//4)
+        # encode the pose information and concat to latent
+        if self.bPoseCondition:
+            #rel_pose_emb2 = self.rel_pose_embedding2(rel_pose.float()).view(-1, 1, self.img_size//4, self.img_size//4)
+            rel_pose_emb2 = utils.positional_encoding(rel_pose.float(), num_encoding_functions=int(32), include_input=False, log_sampling=True)
+            rel_pose_emb2 = rel_pose_emb2.repeat(1, 7)
+            rel_pose_emb2 = rel_pose_emb2.view(-1, 1, self.img_size // 4, self.img_size // 4)
             quantized_inputs = torch.cat((quantized_inputs, rel_pose_emb2), dim=1)
+        #decode the image
         recon = self.decode(quantized_inputs)
         #recon = recon/2+1
         return [recon, vq_loss, input]
